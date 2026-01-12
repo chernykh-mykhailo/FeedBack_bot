@@ -81,7 +81,17 @@ async def handle_chat_shared(message: Message):
 
 @dp.message(Command("setup"))
 async def cmd_setup(message: Message):
-    await check_setup(message)
+    if message.chat.type in ["group", "supergroup"]:
+        chat_id = message.chat.id
+        await message.answer(
+            f"✅ **Групу знайдено!**\n\n"
+            f"Ваш ID групи: <code>{chat_id}</code>\n\n"
+            f"1. Відкрийте файл <code>.env</code>\n"
+            f"2. Замініть <code>ADMIN_GROUP_ID=0</code> на <code>ADMIN_GROUP_ID={chat_id}</code>\n"
+            f"3. Перезапустіть бота."
+        )
+    else:
+        await check_setup(message)
 
 # --- USER HANDLERS ---
 
