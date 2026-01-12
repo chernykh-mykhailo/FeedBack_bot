@@ -1,5 +1,6 @@
 import aiosqlite
 import os
+from typing import Any
 
 DB_PATH = "feedback_bot.db"
 
@@ -21,6 +22,23 @@ async def init_db():
                 PRIMARY KEY (user_msg_id, admin_msg_id)
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+        await db.commit()
+
+async def get_setting(key: str, default: Any = None):
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT value FROM settings WHERE key = ?", (key,)) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else default
+
+async def set_setting(key: str, value: Any):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value)))
         await db.commit()
 
 async def save_message_map(user_msg_id: int, admin_msg_id: int, chat_id: int):
@@ -62,3 +80,15 @@ async def register_user_topic(user_id: int, topic_id: int, username: str = None,
             (user_id, topic_id, username, full_name)
         )
         await db.commit()
+
+async def get_total_users():
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT COUNT(*) FROM users") as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+async def get_total_messages():
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT COUNT(*) FROM messages") as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
