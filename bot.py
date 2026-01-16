@@ -10,7 +10,7 @@ from aiogram.types import (
     KeyboardButton, ChatShared, InlineKeyboardMarkup, InlineKeyboardButton,
     CallbackQuery, FSInputFile
 )
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
@@ -28,6 +28,7 @@ dp = Dispatcher()
 class SettingsStates(StatesGroup):
     waiting_for_start_msg = State()
     waiting_for_topic_name = State()
+    waiting_for_ack_msg = State()
 
 # Icons
 USER_ICON = "👤"
@@ -71,6 +72,7 @@ def get_settings_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎁 Start Message / Media", callback_data="set_start_msg")],
         [InlineKeyboardButton(text="👋 Change Topic Name", callback_data="set_topic_name")],
+        [InlineKeyboardButton(text="✅ Auto-Reply Message", callback_data="set_ack_msg")],
         [InlineKeyboardButton(text="😐 Toggle Anonymous Mode", callback_data="set_anon")],
         [InlineKeyboardButton(text="⚙️ Advanced", callback_data="advanced")],
         [InlineKeyboardButton(text="📊 Statistics", callback_data="stats"), InlineKeyboardButton(text="❌ Delete Bot", callback_data="delete_bot")]
@@ -100,11 +102,14 @@ async def cb_topic_name(callback: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "admin_main")
 async def cb_admin_main(callback: CallbackQuery, state: FSMContext = None):
     if state: await state.clear()
-    await callback.message.edit_caption(
-        caption="<b>Attention ❗️</b>\n\nYou can customize the appearance of the bot using the buttons below",
-        reply_markup=get_settings_kb(),
-        parse_mode="HTML"
-    )
+    try:
+        await callback.message.edit_caption(
+            caption="<b>Attention ❗️</b>\n\nYou can customize the appearance of the bot using the buttons below",
+            reply_markup=get_settings_kb(),
+            parse_mode="HTML"
+        )
+    except TelegramBadRequest:
+        pass
 
 @dp.message(SettingsStates.waiting_for_topic_name)
 async def process_topic_name(message: Message, state: FSMContext):
@@ -124,23 +129,29 @@ async def cb_stats(callback: CallbackQuery):
         "<i>Last 24 hours stats could be added here.</i>"
     )
     
-    await callback.message.edit_caption(
-        caption=stats_text,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Go Back", callback_data="admin_main")]]),
-        parse_mode="HTML"
-    )
+    try:
+        await callback.message.edit_caption(
+            caption=stats_text,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Go Back", callback_data="admin_main")]]),
+            parse_mode="HTML"
+        )
+    except TelegramBadRequest:
+        pass
 
 @dp.callback_query(F.data == "advanced")
 async def cb_advanced(callback: CallbackQuery):
-    await callback.message.edit_caption(
-        caption="⚙️ <b>Advanced Settings</b>\n\nCustomize technical aspects of the bot here.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🧹 Clear Cache", callback_data="clear_cache")],
-            [InlineKeyboardButton(text="📁 Export Data", callback_data="export_data")],
-            [InlineKeyboardButton(text="⬅️ Go Back", callback_data="admin_main")]
-        ]),
-        parse_mode="HTML"
-    )
+    try:
+        await callback.message.edit_caption(
+            caption="⚙️ <b>Advanced Settings</b>\n\nCustomize technical aspects of the bot here.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🧹 Clear Cache", callback_data="clear_cache")],
+                [InlineKeyboardButton(text="📁 Export Data", callback_data="export_data")],
+                [InlineKeyboardButton(text="⬅️ Go Back", callback_data="admin_main")]
+            ]),
+            parse_mode="HTML"
+        )
+    except TelegramBadRequest:
+        pass
 
 @dp.callback_query(F.data == "set_anon")
 async def cb_set_anon(callback: CallbackQuery):
@@ -152,7 +163,10 @@ async def cb_set_anon(callback: CallbackQuery):
     await callback.answer(f"Anonymous mode {status_text}", show_alert=True)
     
     # Refresh menu
-    await callback.message.edit_reply_markup(reply_markup=get_settings_kb())
+    try:
+        await callback.message.edit_reply_markup(reply_markup=get_settings_kb())
+    except TelegramBadRequest:
+        pass
 
 @dp.callback_query(F.data == "set_start_msg")
 async def cb_start_msg(callback: CallbackQuery, state: FSMContext):
@@ -164,6 +178,25 @@ async def cb_start_msg(callback: CallbackQuery, state: FSMContext):
         parse_mode="HTML"
     )
     await state.set_state(SettingsStates.waiting_for_start_msg)
+
+@dp.callback_query(F.data == "set_ack_msg")
+async def cb_ack_msg(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_caption(
+        caption="💬 <b>New message confirmation</b>\n\n"
+                "This message will be sent to the user after they send any message to the bot. "
+                "It will be automatically deleted after 5 seconds.\n\n"
+                "Keywords:\n#FIRST_NAME, #LAST_NAME, #USERNAME, #USER_ID\n\n"
+                "HTML tags are supported.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Go Back", callback_data="admin_main")]]),
+        parse_mode="HTML"
+    )
+    await state.set_state(SettingsStates.waiting_for_ack_msg)
+
+@dp.message(SettingsStates.waiting_for_ack_msg)
+async def process_ack_msg(message: Message, state: FSMContext):
+    await db.set_setting("ack_msg", message.text)
+    await message.answer(f"✅ Auto-reply message saved!", parse_mode="HTML")
+    await state.clear()
 
 @dp.message(SettingsStates.waiting_for_start_msg)
 async def process_start_msg(message: Message, state: FSMContext):
@@ -228,11 +261,29 @@ async def handle_user_message(message: Message):
     sent = await message.copy_to(chat_id=config.ADMIN_GROUP_ID, message_thread_id=topic_id)
     await db.save_message_map(message.message_id, sent.message_id, message.from_user.id)
 
+    # Sending confirmation message
+    ack_template = await db.get_setting("ack_msg", "✅ <b>Чую Вас! Дякую за звернення</b>\nВідповім як тільки так відразу🌸")
+    ack_text = await replace_keywords(ack_template, message.from_user)
+    
+    try:
+        ack_msg = await message.answer(ack_text, parse_mode="HTML")
+        await db.set_user_ack(message.from_user.id, ack_msg.message_id)
+    except Exception:
+        pass
+
 @dp.message(F.chat.id == config.ADMIN_GROUP_ID, F.is_topic_message)
 async def handle_admin_reply(message: Message):
     if message.text and message.text.startswith("/"): return
     user_id = await db.get_user_by_topic(message.message_thread_id)
     if user_id:
+        # Clear last ack message if any
+        ack_id = await db.get_and_clear_user_ack(user_id)
+        if ack_id:
+            try:
+                await bot.delete_message(chat_id=user_id, message_id=ack_id)
+            except Exception:
+                pass
+                
         sent = await message.copy_to(chat_id=user_id)
         await db.save_message_map(sent.message_id, message.message_id, user_id)
 

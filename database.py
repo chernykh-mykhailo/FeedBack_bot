@@ -11,7 +11,8 @@ async def init_db():
                 user_id INTEGER PRIMARY KEY,
                 topic_id INTEGER UNIQUE,
                 username TEXT,
-                full_name TEXT
+                full_name TEXT,
+                last_ack_id INTEGER
             )
         """)
         await db.execute("""
@@ -28,6 +29,11 @@ async def init_db():
                 value TEXT
             )
         """)
+        # Migration: Add last_ack_id to users if not exists
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN last_ack_id INTEGER")
+        except Exception:
+            pass # Column already exists
         await db.commit()
 
 async def get_setting(key: str, default: Any = None):
@@ -92,3 +98,19 @@ async def get_total_messages():
         async with db.execute("SELECT COUNT(*) FROM messages") as cursor:
             row = await cursor.fetchone()
             return row[0] if row else 0
+
+async def set_user_ack(user_id: int, msg_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET last_ack_id = ? WHERE user_id = ?", (msg_id, user_id))
+        await db.commit()
+
+async def get_and_clear_user_ack(user_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT last_ack_id FROM users WHERE user_id = ?", (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            ack_id = row[0] if row else None
+            
+        if ack_id:
+            await db.execute("UPDATE users SET last_ack_id = NULL WHERE user_id = ?", (user_id,))
+            await db.commit()
+        return ack_id
